@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sacabambaspis Adventure</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0077be;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            z-index: 5;
+        }
+        .menu-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: auto;
+            z-index: 10;
+        }
+        .btn {
+            background: #ffcc00;
+            color: #333;
+            padding: 15px 40px;
+            border-radius: 50px;
+            font-weight: bold;
+            font-size: 24px;
+            cursor: pointer;
+            border: none;
+            transition: transform 0.2s, background 0.2s;
+            pointer-events: auto;
+            margin-top: 20px;
+        }
+        .btn:hover {
+            transform: scale(1.1);
+            background: #ffe066;
+        }
+        #energy-bar-container {
+            width: 250px;
+            height: 20px;
+            background: rgba(0,0,0,0.3);
+            border: 2px solid white;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        #energy-bar-fill {
+            width: 100%;
+            height: 100%;
+            background: #00f2fe;
+            transition: width 0.1s;
+        }
+        #boss-warning {
+            position: absolute;
+            top: 30%;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ff4757;
+            font-size: clamp(32px, 8vw, 64px);
+            font-weight: bold;
+            display: none;
+            text-align: center;
+            width: 100%;
+            animation: blink 0.5s infinite;
+        }
+        @keyframes blink {
+            0% { opacity: 0; }
+            50% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div>
+            <div id="score-display" class="text-3xl font-bold">SCORE: 0</div>
+            <div class="mt-4 text-sm font-bold">ENERGY (SHOT GAUGE)</div>
+            <div id="energy-bar-container">
+                <div id="energy-bar-fill"></div>
+            </div>
+        </div>
+        <div id="boss-warning">WARNING: GIANT MEGAMOUTH!</div>
+    </div>
+
+    <div id="start-menu" class="menu-overlay">
+        <h1 class="text-6xl font-bold mb-6 text-white text-center">古代魚<br>サカバンバスピス</h1>
+        <p class="text-white text-xl mb-8 text-center leading-relaxed">
+            WASD / 方向キー：自由移動<br>
+            クリック / スペース：泡ショット<br>
+            <span class="text-yellow-400 font-bold">【注意】ショットはエネルギー制だ！</span><br>
+            <span class="text-green-400 font-bold">ボスのシダズーンは無敵時間が長いぞ！</span>
+        </p>
+        <button class="btn" onclick="startGame()">冒険を始める</button>
+    </div>
+
+    <div id="game-over-menu" class="menu-overlay" style="display: none;">
+        <h1 class="text-6xl font-bold mb-6 text-red-500">GAME OVER</h1>
+        <p id="final-score" class="text-white text-3xl mb-10 font-bold">SCORE: 0</p>
+        <button class="btn" onclick="startGame()">リベンジする</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score-display');
+        const energyBar = document.getElementById('energy-bar-fill');
+        const startMenu = document.getElementById('start-menu');
+        const gameOverMenu = document.getElementById('game-over-menu');
+        const finalScoreElement = document.getElementById('final-score');
+        const bossWarning = document.getElementById('boss-warning');
+
+        // Assets
+        const playerImageUrl = 'https://raw.githubusercontent.com/yousi107/materials/main/kodai_sacabambaspis.png';
+        const enemyImageUrl = 'https://raw.githubusercontent.com/yousi107/materials/main/fish_megamouth_shark.png';
+        const xidazoonImageUrl = 'https://raw.githubusercontent.com/yousi107/materials/main/kodai_xidazoon.png';
+        const deadImageUrl = 'https://raw.githubusercontent.com/yousi107/materials/main/7145e16e5606d24c39f274021b5f044b_t.jpg';
+
+        const images = {};
+        function loadImage(name, url) {
+            images[name] = new Image();
+            images[name].crossOrigin = "anonymous";
+            images[name].src = url;
+            images[name].loaded = false;
+            images[name].onload = () => { images[name].loaded = true; };
+        }
+
+        loadImage('player', playerImageUrl);
+        loadImage('enemy', enemyImageUrl);
+        loadImage('xidazoon', xidazoonImageUrl);
+        loadImage('dead', deadImageUrl);
+
+        let gameState = 'START';
+        let score = 0;
+        let animationId;
+        let isBossActive = false;
+        let nextBossScore = 3000; 
+        
+        const scale = 0.6; 
+
+        const player = {
+            x: 100,
+            y: 0,
+            width: 120 * scale,
+            height: 70 * scale,
+            speed: 8,
+            bullets: [],
+            energy: 100,
+            maxEnergy: 100,
+            energyRegen: 0.5, 
+            shotCost: 20 
+        };
+
+        const keys = { w: false, a: false, s: false, d: false, arrowup: false, arrowdown: false, arrowleft: false, arrowright: false, " ": false };
+        let enemies = [];
+        let enemyBullets = [];
+        let particles = [];
+        let backgroundBubbles = [];
+        let obstacles = [];
+        let frameCount = 0;
+
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) {
+                keys[key] = true;
+                if (key === " " && gameState === 'PLAYING') fireBullet();
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) keys[key] = false;
+        });
+
+        window.addEventListener('mousedown', () => {
+            if (gameState === 'PLAYING') fireBullet();
+        });
+        
+        window.addEventListener('touchstart', (e) => {
+            if (gameState === 'PLAYING') {
+                fireBullet();
+                e.preventDefault();
+            }
+        }, {passive: false});
+
+        function fireBullet() {
+            if (player.energy >= player.shotCost) {
+                player.energy -= player.shotCost;
+                player.bullets.push({ 
+                    x: player.x + player.width * 0.8, 
+                    y: player.y + player.height / 2, 
+                    radius: 7, 
+                    speed: 18 
+                });
+            }
+        }
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (gameState === 'START') player.y = canvas.height / 2;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        function createEnemy() {
+            if (isBossActive) return;
+
+            const rand = Math.random();
+            let type = 'normal';
+            let isBoss = false;
+
+            if (score >= nextBossScore && !isBossActive) {
+                isBoss = true;
+                isBossActive = true;
+                
+                // ボスの種類を決定 (メガマウス or シダズーン)
+                const bossType = Math.random() < 0.5 ? 'megamouth' : 'xidazoon';
+                type = bossType;
+
+                bossWarning.innerText = bossType === 'megamouth' ? 'WARNING: GIANT MEGAMOUTH!' : 'WARNING: ANCIENT XIDAZOON!';
+                bossWarning.style.display = 'block';
+                setTimeout(() => bossWarning.style.display = 'none', 3000);
+            } else if (rand < 0.4) {
+                type = 'xidazoon';
+            }
+
+            let width, height, hp;
+            if (isBoss) {
+                if (type === 'megamouth') {
+                    width = 400; height = 260;
+                } else {
+                    width = 280; height = 280;
+                }
+                hp = 35;
+            } else {
+                width = type === 'xidazoon' ? 80 : 100;
+                height = type === 'xidazoon' ? 80 : 60;
+                hp = type === 'xidazoon' ? 3 : 2;
+            }
+            
+            enemies.push({
+                type: type,
+                x: canvas.width + 150,
+                y: Math.random() * (canvas.height - height),
+                targetX: isBoss ? canvas.width - width - 50 : (type === 'xidazoon' ? canvas.width - 150 : -300),
+                width: width,
+                height: height,
+                speed: isBoss ? 3 : (4 + (score / 10000)),
+                hp: hp,
+                maxHp: hp,
+                isBoss: isBoss,
+                lastShot: 0,
+                isAttacking: false, 
+                isInvincible: false, 
+                isUltMode: false,
+                ultChargeStartTime: 0,
+                ultChargeDuration: 3000,
+                isCharging: false,
+                shotCooldown: isBoss ? (type === 'xidazoon' ? 4500 : 1000) : (type === 'xidazoon' ? 3500 : 0)
+            });
+        }
+
+        function drawSacabambaspis(x, y, w, h) {
+            ctx.save();
+            ctx.translate(x + w / 2, y + h / 2);
+            ctx.scale(-1, 1);
+            if (images.player.loaded) {
+                ctx.drawImage(images.player, -w / 2, -h / 2, w, h);
+            } else {
+                ctx.fillStyle = '#C0C0C0';
+                ctx.beginPath(); ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawEnemyObject(e) {
+            ctx.save();
+            const img = (e.type === 'xidazoon') ? images.xidazoon : images.enemy;
+            
+            if (img.loaded) {
+                ctx.translate(e.x + e.width / 2, e.y + e.height / 2);
+                
+                if (e.type === 'xidazoon') ctx.scale(-1, 1); 
+                
+                if (e.isCharging) {
+                    ctx.translate((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10);
+                }
+
+                if (e.isAttacking && !e.isInvincible) {
+                    ctx.globalAlpha = Math.sin(Date.now() / 50) > 0 ? 0.3 : 1.0;
+                }
+
+                ctx.drawImage(img, -e.width / 2, -e.height / 2, e.width, e.height);
+                ctx.globalAlpha = 1.0;
+                
+                if (e.isInvincible) {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                    ctx.lineWidth = 6;
+                    ctx.strokeRect(-e.width/2 - 4, -e.height/2 - 4, e.width + 8, e.height + 8);
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                    ctx.fillRect(-e.width/2 - 4, -e.height/2 - 4, e.width + 8, e.height + 8);
+                }
+
+                if (e.isBoss) {
+                    ctx.restore();
+                    ctx.save();
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(e.x + 10, e.y - 30, e.width - 20, 12);
+                    ctx.fillStyle = e.isUltMode ? '#ff9f43' : '#ff4757';
+                    ctx.fillRect(e.x + 10, e.y - 30, (e.width - 20) * (e.hp / e.maxHp), 12);
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(e.x + 10, e.y - 30, e.width - 20, 12);
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawObstacles() {
+            for (const o of obstacles) {
+                ctx.save();
+                ctx.fillStyle = '#57606f';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'black';
+                ctx.beginPath();
+                ctx.moveTo(o.x, o.y + o.height);
+                ctx.lineTo(o.x + o.width * 0.2, o.y + o.height * 0.1);
+                ctx.lineTo(o.x + o.width * 0.5, o.y);
+                ctx.lineTo(o.x + o.width * 0.8, o.y + o.height * 0.1);
+                ctx.lineTo(o.x + o.width, o.y + o.height);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#2f3542';
+                ctx.lineWidth = 4;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        function createParticle(x, y, color, count = 10) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x, y,
+                    dx: (Math.random() - 0.5) * 12,
+                    dy: (Math.random() - 0.5) * 12,
+                    life: 1.0,
+                    color: color || '#fff'
+                });
+            }
+        }
+
+        function spawnBackgroundBubbles() {
+            if (Math.random() > 0.92) {
+                backgroundBubbles.push({
+                    x: Math.random() * canvas.width,
+                    y: canvas.height + 30,
+                    size: Math.random() * 8 + 2,
+                    speed: Math.random() * 1.5 + 0.5
+                });
+            }
+        }
+
+        function startGame() {
+            gameState = 'PLAYING';
+            score = 0;
+            isBossActive = false;
+            nextBossScore = 3000; 
+            player.x = 100;
+            player.y = canvas.height / 2;
+            player.energy = player.maxEnergy;
+            player.bullets = [];
+            enemyBullets = [];
+            enemies = [];
+            particles = [];
+            obstacles = [];
+            frameCount = 0;
+            scoreElement.innerText = `SCORE: 0`;
+            startMenu.style.display = 'none';
+            gameOverMenu.style.display = 'none';
+            bossWarning.style.display = 'none';
+            update();
+        }
+
+        function gameOver() {
+            if (gameState !== 'PLAYING') return;
+            gameState = 'GAMEOVER';
+            createParticle(player.x + player.width/2, player.y + player.height/2, '#ffcc00', 50);
+            setTimeout(() => {
+                cancelAnimationFrame(animationId);
+                finalScoreElement.innerText = `SCORE: ${Math.floor(score)}`;
+                gameOverMenu.style.display = 'flex';
+            }, 1500);
+        }
+
+        function update() {
+            const now = Date.now();
+            if (gameState === 'GAMEOVER') {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                for (const b of backgroundBubbles) {
+                    ctx.beginPath(); ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2); ctx.fill();
+                }
+                for (const e of enemies) drawEnemyObject(e);
+                
+                if (images.dead.loaded) {
+                    ctx.save();
+                    const dw = 180;
+                    const dh = 180;
+                    ctx.translate(player.x + player.width/2, player.y + player.height/2);
+                    ctx.scale(-1, 1);
+                    ctx.globalAlpha = 0.8;
+                    ctx.drawImage(images.dead, -dw/2, -dh/2, dw, dh);
+                    ctx.restore();
+                }
+                
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const p = particles[i];
+                    p.x += p.dx; p.y += (p.dy || 0); p.life -= 0.01;
+                    ctx.fillStyle = p.color; ctx.globalAlpha = p.life;
+                    ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
+                    if (p.life <= 0) particles.splice(i, 1);
+                }
+                animationId = requestAnimationFrame(update);
+                return;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            spawnBackgroundBubbles();
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+            for (let i = backgroundBubbles.length - 1; i >= 0; i--) {
+                const b = backgroundBubbles[i];
+                b.y -= b.speed;
+                ctx.beginPath(); ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2); ctx.fill();
+                if (b.y < -30) backgroundBubbles.splice(i, 1);
+            }
+
+            if (player.energy < player.maxEnergy) {
+                player.energy = Math.min(player.maxEnergy, player.energy + player.energyRegen);
+            }
+            energyBar.style.width = `${player.energy}%`;
+
+            if (keys.w || keys.arrowup) player.y -= player.speed;
+            if (keys.s || keys.arrowdown) player.y += player.speed;
+            if (keys.a || keys.arrowleft) player.x -= player.speed;
+            if (keys.d || keys.arrowright) player.x += player.speed;
+
+            player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+            player.y = Math.max(0, Math.min(canvas.height - player.height, player.y));
+
+            drawObstacles();
+
+            ctx.fillStyle = '#e0ffff';
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 1;
+            for (let i = player.bullets.length - 1; i >= 0; i--) {
+                const b = player.bullets[i];
+                b.x += b.speed;
+                ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                
+                let hitObstacle = false;
+                for (const o of obstacles) {
+                    if (b.x > o.x && b.x < o.x + o.width && b.y > o.y && b.y < o.y + o.height) {
+                        hitObstacle = true; break;
+                    }
+                }
+                if (b.x > canvas.width || hitObstacle) player.bullets.splice(i, 1);
+            }
+
+            ctx.fillStyle = '#ff4757';
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = '#ff4757';
+            for (let i = enemyBullets.length - 1; i >= 0; i--) {
+                const eb = enemyBullets[i];
+                eb.x -= eb.speed;
+                if (eb.dy) eb.y += eb.dy;
+                ctx.beginPath(); ctx.arc(eb.x, eb.y, 7, 0, Math.PI * 2); ctx.fill();
+                
+                let safe = false;
+                for (const o of obstacles) {
+                    if (eb.x > o.x && eb.x < o.x + o.width && eb.y > o.y && eb.y < o.y + o.height) {
+                        safe = true; break;
+                    }
+                }
+                if (safe) {
+                    enemyBullets.splice(i, 1);
+                    continue;
+                }
+                if (eb.x > player.x + 15 && eb.x < player.x + player.width - 15 &&
+                    eb.y > player.y + 15 && eb.y < player.y + player.height - 15) {
+                    gameOver();
+                }
+                if (eb.x < -100 || eb.x > canvas.width + 100 || eb.y < -100 || eb.y > canvas.height + 100) {
+                    enemyBullets.splice(i, 1);
+                }
+            }
+            ctx.shadowBlur = 0;
+
+            frameCount++;
+            if (frameCount % 60 === 0) createEnemy();
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const e = enemies[i];
+                
+                if (e.isBoss) {
+                    if (e.x > e.targetX) {
+                        e.x -= e.speed;
+                    } else if (e.x < e.targetX) {
+                        e.x = e.targetX;
+                    }
+                    if (!e.isCharging) {
+                        const targetY = player.y + player.height/2 - e.height/2;
+                        e.y += (targetY - e.y) * 0.05;
+                    }
+                } else if (e.type === 'xidazoon') {
+                    if (e.x > e.targetX) {
+                        e.x -= e.speed;
+                    } else {
+                        e.x = e.targetX;
+                    }
+                    const targetY = player.y + player.height/2 - e.height/2;
+                    e.y += (targetY - e.y) * 0.03; 
+                } else {
+                    e.x -= e.speed;
+                    const diffY = (player.y + player.height/2) - (e.y + e.height/2);
+                    e.y += Math.sign(diffY) * 1.2;
+                }
+
+                drawEnemyObject(e);
+
+                // ボスの特殊攻撃（メガマウスのみ）
+                if (e.isBoss && e.type === 'megamouth' && e.hp <= (e.maxHp * 0.5)) {
+                    if (!e.isUltMode && !e.isCharging) {
+                        e.isCharging = true;
+                        e.ultChargeStartTime = now;
+                        obstacles = [{
+                            x: 50, y: Math.random() * (canvas.height - 200) + 50,
+                            width: 120, height: 180
+                        }];
+                    }
+                    if (e.isCharging) {
+                        if (now - e.ultChargeStartTime >= e.ultChargeDuration) {
+                            e.isCharging = false;
+                            e.isUltMode = true;
+                        }
+                    }
+                    if (e.isUltMode) {
+                        if (frameCount % 10 === 0) {
+                            enemyBullets.push({ x: Math.random() * canvas.width, y: -20, speed: 0, dy: 10 });
+                            enemyBullets.push({ x: e.x, y: e.y + e.height/2, speed: 12, dy: (Math.random() - 0.5) * 14 });
+                        }
+                    }
+                }
+
+                // シダズーンの攻撃ロジック
+                if (e.type === 'xidazoon' && now - e.lastShot > e.shotCooldown && !e.isAttacking) {
+                    e.isAttacking = true;
+                    setTimeout(() => {
+                        if (gameState !== 'PLAYING') return;
+                        e.isInvincible = true; 
+                        const angle = Math.atan2((player.y + player.height/2) - (e.y + e.height/2), player.x - (e.x + e.width/2));
+                        
+                        // ボスシダズーンは3連射
+                        const burstCount = e.isBoss ? 3 : 1;
+                        for(let b=0; b<burstCount; b++) {
+                            setTimeout(() => {
+                                enemyBullets.push({ 
+                                    x: e.x, y: e.y + e.height / 2, 
+                                    speed: -Math.cos(angle) * 10, 
+                                    dy: Math.sin(angle) * 10 
+                                });
+                            }, b * 200);
+                        }
+                        
+                        // 無敵時間設定: ボスなら2.4秒、ザコなら1.2秒
+                        const invincibleTime = e.isBoss ? 2400 : 1200;
+                        setTimeout(() => {
+                            e.isAttacking = false;
+                            e.isInvincible = false;
+                            e.lastShot = Date.now();
+                        }, invincibleTime); 
+                    }, 2000); 
+                } else if (e.isBoss && e.type === 'megamouth' && !e.isUltMode && !e.isCharging && now - e.lastShot > e.shotCooldown) {
+                    for(let j = -1; j <= 1; j++) {
+                        enemyBullets.push({ x: e.x + 20, y: e.y + e.height / 2, speed: 6.5, dy: j * 2.5 });
+                    }
+                    e.lastShot = now;
+                }
+
+                if (player.x + 20 < e.x + e.width - 20 && player.x + player.width - 20 > e.x + 20 &&
+                    player.y + 20 < e.y + e.height - 20 && player.y + player.height - 20 > e.y + 20) {
+                    gameOver();
+                }
+
+                for (let j = player.bullets.length - 1; j >= 0; j--) {
+                    const b = player.bullets[j];
+                    if (b.x + b.radius > e.x && b.x - b.radius < e.x + e.width &&
+                        b.y + b.radius > e.y && b.y - b.radius < e.y + e.height) {
+                        
+                        if (e.type === 'xidazoon' && e.isInvincible) {
+                            createParticle(b.x, b.y, '#fff', 4);
+                            player.bullets.splice(j, 1);
+                            break; 
+                        }
+
+                        e.hp--;
+                        player.bullets.splice(j, 1);
+                        
+                        createParticle(b.x, b.y, '#e0ffff', 3);
+                        if (e.hp <= 0) {
+                            createParticle(e.x + e.width/2, e.y + e.height/2, e.type === 'xidazoon' ? '#7bed9f' : '#2f3542', e.isBoss ? 150 : 15);
+                            
+                            if (e.isBoss) { 
+                                isBossActive = false; 
+                                score += 1000; 
+                                nextBossScore = score + 3000; 
+                                obstacles = []; 
+                            } else {
+                                score += (e.type === 'xidazoon' ? 300 : 50);
+                            }
+                            
+                            enemies.splice(i, 1);
+                            scoreElement.innerText = `SCORE: ${Math.floor(score)}`;
+                        }
+                        break;
+                    }
+                }
+                if (e.x + e.width < -300) {
+                    enemies.splice(i, 1);
+                }
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.dx; p.y += (p.dy || 0); p.life -= 0.04;
+                ctx.fillStyle = p.color; ctx.globalAlpha = p.life;
+                ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 1.0;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            drawSacabambaspis(player.x, player.y, player.width, player.height);
+            animationId = requestAnimationFrame(update);
+        }
+    </script>
+</body>
+</html>
